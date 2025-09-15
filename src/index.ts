@@ -1019,10 +1019,10 @@ import { createAPIRouter } from './routes/api.js';
 import { createWebhookRouter } from './routes/webhook.js';
 
 // Serve static files for dashboard
-// In production (dist/), go up two levels to reach public/
+// In production (dist/), go up one level to reach public/
 // In development (src/), go up one level to reach public/
 const publicPath = process.env.NODE_ENV === 'production' 
-  ? path.join(__dirname, '..', '..', 'public')
+  ? path.join(__dirname, '..', 'public')
   : path.join(__dirname, '..', 'public');
 
 // Serve static files
