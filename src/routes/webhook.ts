@@ -184,7 +184,7 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
   }
 
   // Función auxiliar para enviar mensajes con reintentos
-  async function sendMessageWithRetry(instance: string, number: string, text: string, retries = 3) {
+  async function sendMessageWithRetry(instance: string, number: string, text: string, retries = 3): Promise<any> {
     for (let i = 0; i < retries; i++) {
       try {
         const result = await evolutionAPI.sendText(instance, {
@@ -200,6 +200,8 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
+    // Esta línea nunca debería alcanzarse, pero TypeScript lo requiere
+    throw new Error('Failed to send message after all retries');
   }
 
   // Handler para comandos
