@@ -963,9 +963,11 @@ app.use(express.json());
 
 // Import API routes
 import { createAPIRouter } from './routes/api.js';
+import { createWebhookRouter } from './routes/webhook.js';
 
 // Use API routes
 app.use('/api', createAPIRouter(evolutionAPI));
+app.use('/api', createWebhookRouter(evolutionAPI));
 
 // Root endpoint
 app.get('/', (_req, res) => {
@@ -980,7 +982,16 @@ app.get('/', (_req, res) => {
       send_media: '/api/send/media',
       contacts: '/api/instances/:name/contacts',
       groups: '/api/instances/:name/groups',
-      chats: '/api/instances/:name/chats'
+      chats: '/api/instances/:name/chats',
+      webhook: {
+        receive: '/api/webhook',
+        receive_instance: '/api/webhook/:instanceName',
+        setup: '/api/webhook/setup',
+        config: '/api/webhook/config/:instanceName',
+        messages: '/api/webhook/messages',
+        stats: '/api/webhook/stats',
+        autoresponse: '/api/webhook/autoresponse'
+      }
     }
   });
 });
