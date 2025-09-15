@@ -6,7 +6,6 @@ import {
   Tool
 } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
-import { z } from 'zod';
 import dotenv from 'dotenv';
 import { EvolutionAPI } from './services/evolution-api.js';
 import { TemplateService } from './services/template-service.js';
