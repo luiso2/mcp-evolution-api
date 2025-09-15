@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 30
+    },
+    "auditLog": "C:\\Claude Projects\\evolution-api-mcp-server\\logs\\.8b8b86bb003e9ff5a482e78c0ed7c39329a15b41-audit.json",
+    "files": [
+        {
+            "date": 1757938559139,
+            "name": "C:\\Claude Projects\\evolution-api-mcp-server\\logs\\error-2025-09-15.log",
+            "hash": "c609d59dd24efe8f42a74db88359483708025620deca0fd801f1d95659622156"
+        }
+    ],
+    "hashType": "sha256"
+}

@@ -1025,10 +1025,21 @@ const publicPath = process.env.NODE_ENV === 'production'
   ? path.join(__dirname, '..', '..', 'public')
   : path.join(__dirname, '..', 'public');
 
-app.use('/dashboard', express.static(publicPath));
+// Serve static files
+app.use(express.static(publicPath));
 
-// Dashboard route
+// Login route
+app.get('/login', (_req, res) => {
+  res.sendFile(path.join(publicPath, 'login.html'));
+});
+
+// Dashboard route (protected)
 app.get('/dashboard', (_req, res) => {
+  res.sendFile(path.join(publicPath, 'index.html'));
+});
+
+// Main dashboard route
+app.get('/index.html', (_req, res) => {
   res.sendFile(path.join(publicPath, 'index.html'));
 });
 
@@ -1038,13 +1049,19 @@ app.use('/api/webhook', createWebhookRouter(evolutionAPI));
 // API routes (CON autenticación) 
 app.use('/api', createAPIRouter(evolutionAPI, instanceManager));
 
-// Root endpoint
+// Root endpoint - redirect to login
 app.get('/', (_req, res) => {
+  res.redirect('/login');
+});
+
+// API info endpoint
+app.get('/info', (_req, res) => {
   res.json({ 
     status: 'ok', 
     service: 'evolution-api-mcp',
     version: '1.0.0',
     dashboard: '/dashboard',
+    login: '/login',
     endpoints: {
       health: '/api/health',
       instances: '/api/instances',

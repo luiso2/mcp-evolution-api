@@ -2,6 +2,9 @@
 
 class Dashboard {
     constructor() {
+        // Verificar autenticación
+        this.checkAuthentication();
+        
         this.apiBase = window.location.origin;
         this.instances = [];
         this.currentTab = 'dashboard';
@@ -12,6 +15,7 @@ class Dashboard {
 
     init() {
         this.setupEventListeners();
+        this.setupAuthUI();
         this.loadDashboard();
         this.startAutoRefresh();
     }
@@ -70,7 +74,10 @@ class Dashboard {
                 this.loadInstancesForSelect();
                 break;
             case 'webhooks':
-                this.loadWebhooks();
+                this.loadWebhooksTab();
+                break;
+            case 'openai':
+                this.loadOpenAITab();
                 break;
             case 'logs':
                 this.loadLogs();
@@ -461,11 +468,6 @@ class Dashboard {
         }
     }
 
-    loadWebhooks() {
-        // Implement webhook management
-        console.log('Loading webhooks...');
-    }
-
     loadLogs() {
         // Implement log viewing
         console.log('Loading logs...');
@@ -518,6 +520,460 @@ class Dashboard {
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
             this.refreshInterval = null;
+        }
+    }
+
+    // Webhook Configuration Methods
+    async loadWebhooksTab() {
+        await this.loadInstancesForWebhook();
+        this.setupWebhookEventHandlers();
+        await this.loadWebhookStatus();
+    }
+
+    async loadInstancesForWebhook() {
+        try {
+            const response = await fetch(`${this.apiBase}/api/instances`);
+            const data = await response.json();
+            
+            const select = document.getElementById('webhook-instance');
+            select.innerHTML = '<option value="">Seleccionar instancia...</option>';
+            
+            if (data.instances && data.instances.length > 0) {
+                data.instances.forEach(instance => {
+                    const option = document.createElement('option');
+                    option.value = instance.name;
+                    option.textContent = `${instance.name} (${instance.status})`;
+                    select.appendChild(option);
+                });
+            }
+        } catch (error) {
+            console.error('Error loading instances for webhook:', error);
+            this.showToast('Error al cargar instancias', 'error');
+        }
+    }
+
+    setupWebhookEventHandlers() {
+        const form = document.getElementById('webhook-config-form');
+        const testBtn = document.getElementById('test-webhook-btn');
+        
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.configureWebhook();
+            });
+        }
+        
+        if (testBtn) {
+            testBtn.addEventListener('click', () => {
+                this.testWebhook();
+            });
+        }
+    }
+
+    async configureWebhook() {
+        const instance = document.getElementById('webhook-instance').value;
+        const url = document.getElementById('webhook-url').value;
+        const headersText = document.getElementById('webhook-headers').value;
+        
+        if (!instance || !url) {
+            this.showToast('Instancia y URL son requeridos', 'error');
+            return;
+        }
+        
+        // Get selected events
+        const events = [];
+        document.querySelectorAll('#webhooks-content input[type="checkbox"]:checked').forEach(checkbox => {
+            events.push(checkbox.value);
+        });
+        
+        let headers = {};
+        if (headersText.trim()) {
+            try {
+                headers = JSON.parse(headersText);
+            } catch (error) {
+                this.showToast('Headers JSON inválido', 'error');
+                return;
+            }
+        }
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/webhook/configure`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    instance,
+                    url,
+                    events,
+                    headers
+                })
+            });
+            
+            if (response.ok) {
+                this.showToast('Webhook configurado exitosamente', 'success');
+                await this.loadWebhookStatus();
+                this.addWebhookEvent('Webhook configurado', 'success');
+            } else {
+                const error = await response.text();
+                this.showToast(`Error: ${error}`, 'error');
+            }
+        } catch (error) {
+            console.error('Error configuring webhook:', error);
+            this.showToast('Error al configurar webhook', 'error');
+        }
+    }
+
+    async testWebhook() {
+        const instance = document.getElementById('webhook-instance').value;
+        const url = document.getElementById('webhook-url').value;
+        
+        if (!instance || !url) {
+            this.showToast('Instancia y URL son requeridos para la prueba', 'error');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${this.apiBase}/api/webhook/test`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    instance,
+                    url
+                })
+            });
+            
+            if (response.ok) {
+                this.showToast('Webhook probado exitosamente', 'success');
+                this.addWebhookEvent('Webhook probado', 'success');
+            } else {
+                const error = await response.text();
+                this.showToast(`Error en prueba: ${error}`, 'error');
+                this.addWebhookEvent('Error en prueba de webhook', 'error');
+            }
+        } catch (error) {
+            console.error('Error testing webhook:', error);
+            this.showToast('Error al probar webhook', 'error');
+            this.addWebhookEvent('Error al probar webhook', 'error');
+        }
+    }
+
+    async loadWebhookStatus() {
+        try {
+            const response = await fetch(`${this.apiBase}/api/webhook/status`);
+            const data = await response.json();
+            
+            const statusContainer = document.getElementById('webhook-status');
+            if (data.configured) {
+                statusContainer.innerHTML = `
+                    <div class="webhook-status">
+                        <span class="webhook-status-indicator ${data.active ? 'active' : 'inactive'}"></span>
+                        <div>
+                            <div><strong>${data.instance}</strong></div>
+                            <div class="text-muted small">${data.url}</div>
+                            <div class="text-muted small">Eventos: ${data.events.join(', ')}</div>
+                        </div>
+                    </div>
+                `;
+            } else {
+                statusContainer.innerHTML = '<div class="text-muted">No configurado</div>';
+            }
+        } catch (error) {
+            console.error('Error loading webhook status:', error);
+        }
+    }
+
+    addWebhookEvent(message, type = 'info') {
+        const eventsContainer = document.getElementById('webhook-events');
+        const time = new Date().toLocaleTimeString();
+        
+        const eventElement = document.createElement('div');
+        eventElement.className = `webhook-event ${type}`;
+        eventElement.innerHTML = `
+            ${message}
+            <span class="webhook-event-time">${time}</span>
+        `;
+        
+        // Remove "No hay eventos recientes" message if present
+        const noEventsMsg = eventsContainer.querySelector('.text-muted');
+        if (noEventsMsg && noEventsMsg.textContent === 'No hay eventos recientes') {
+            noEventsMsg.remove();
+        }
+        
+        eventsContainer.insertBefore(eventElement, eventsContainer.firstChild);
+        
+        // Keep only last 10 events
+        const events = eventsContainer.querySelectorAll('.webhook-event');
+        if (events.length > 10) {
+            events[events.length - 1].remove();
+        }
+    }
+
+    // OpenAI Configuration Methods
+    async loadOpenAITab() {
+        console.log('🤖 Loading OpenAI configuration tab');
+        this.setupOpenAIEventHandlers();
+        await this.loadOpenAIConfig();
+        await this.loadOpenAIStats();
+    }
+
+    setupOpenAIEventHandlers() {
+        // Form submission
+        const form = document.getElementById('openai-config-form');
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.saveOpenAIConfig();
+            });
+        }
+
+        // Test connection button
+        const testBtn = document.getElementById('test-openai');
+        if (testBtn) {
+            testBtn.addEventListener('click', () => {
+                this.testOpenAIConnection();
+            });
+        }
+
+        // API key toggle visibility
+        const toggleBtn = document.getElementById('toggle-api-key');
+        const apiKeyInput = document.getElementById('openai-api-key');
+        if (toggleBtn && apiKeyInput) {
+            toggleBtn.addEventListener('click', () => {
+                const isPassword = apiKeyInput.type === 'password';
+                apiKeyInput.type = isPassword ? 'text' : 'password';
+                toggleBtn.innerHTML = isPassword ? '<i class="fas fa-eye-slash"></i>' : '<i class="fas fa-eye"></i>';
+            });
+        }
+
+        // Temperature slider
+        const temperatureSlider = document.getElementById('openai-temperature');
+        const temperatureValue = document.getElementById('temperature-value');
+        if (temperatureSlider && temperatureValue) {
+            temperatureSlider.addEventListener('input', (e) => {
+                temperatureValue.textContent = e.target.value;
+            });
+        }
+    }
+
+    async loadOpenAIConfig() {
+        try {
+            const response = await fetch('/api/openai/config');
+            if (response.ok) {
+                const config = await response.json();
+                this.populateOpenAIForm(config);
+                this.updateOpenAIStatus('active', 'Configurado correctamente');
+            } else {
+                this.updateOpenAIStatus('inactive', 'No configurado');
+            }
+        } catch (error) {
+            console.error('Error loading OpenAI config:', error);
+            this.updateOpenAIStatus('error', 'Error al cargar configuración');
+        }
+    }
+
+    populateOpenAIForm(config) {
+        const fields = {
+            'openai-api-key': config.apiKey ? '••••••••••••••••' : '',
+            'openai-model': config.model || 'gpt-3.5-turbo',
+            'openai-temperature': config.temperature || 0.7,
+            'openai-max-tokens': config.maxTokens || 1000,
+            'openai-timeout': config.timeout || 30,
+            'openai-system-prompt': config.systemPrompt || '',
+            'openai-enabled': config.enabled || false
+        };
+
+        Object.entries(fields).forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (element) {
+                if (element.type === 'checkbox') {
+                    element.checked = value;
+                } else {
+                    element.value = value;
+                }
+            }
+        });
+
+        // Update temperature display
+        const temperatureValue = document.getElementById('temperature-value');
+        if (temperatureValue) {
+            temperatureValue.textContent = fields['openai-temperature'];
+        }
+
+        // Update last update time
+        const lastUpdate = document.getElementById('openai-last-update');
+        if (lastUpdate && config.lastUpdated) {
+            lastUpdate.textContent = new Date(config.lastUpdated).toLocaleString();
+        }
+    }
+
+    async saveOpenAIConfig() {
+        const formData = {
+            apiKey: document.getElementById('openai-api-key').value,
+            model: document.getElementById('openai-model').value,
+            temperature: parseFloat(document.getElementById('openai-temperature').value),
+            maxTokens: parseInt(document.getElementById('openai-max-tokens').value),
+            timeout: parseInt(document.getElementById('openai-timeout').value),
+            systemPrompt: document.getElementById('openai-system-prompt').value,
+            enabled: document.getElementById('openai-enabled').checked
+        };
+
+        // Validate required fields
+        if (!formData.apiKey || formData.apiKey === '••••••••••••••••') {
+            this.showToast('Por favor ingresa una API key válida', 'error');
+            return;
+        }
+
+        if (!formData.apiKey.startsWith('sk-')) {
+            this.showToast('La API key debe comenzar con "sk-"', 'error');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/openai/config', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                this.showToast('Configuración guardada correctamente', 'success');
+                this.updateOpenAIStatus('active', 'Configurado correctamente');
+                await this.loadOpenAIConfig(); // Reload to show masked API key
+            } else {
+                this.showToast(result.error || 'Error al guardar configuración', 'error');
+            }
+        } catch (error) {
+            console.error('Error saving OpenAI config:', error);
+            this.showToast('Error de conexión al guardar configuración', 'error');
+        }
+    }
+
+    async testOpenAIConnection() {
+        const testBtn = document.getElementById('test-openai');
+        const originalText = testBtn.innerHTML;
+        
+        testBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Probando...';
+        testBtn.disabled = true;
+
+        try {
+            const response = await fetch('/api/openai/test', {
+                method: 'POST'
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                this.showToast('✅ Conexión exitosa con OpenAI', 'success');
+                this.updateOpenAIStatus('active', 'Conexión verificada');
+            } else {
+                this.showToast(`❌ Error: ${result.error}`, 'error');
+                this.updateOpenAIStatus('error', 'Error de conexión');
+            }
+        } catch (error) {
+            console.error('Error testing OpenAI connection:', error);
+            this.showToast('❌ Error de conexión al probar OpenAI', 'error');
+            this.updateOpenAIStatus('error', 'Error de conexión');
+        } finally {
+            testBtn.innerHTML = originalText;
+            testBtn.disabled = false;
+        }
+    }
+
+    updateOpenAIStatus(status, message) {
+        const statusElement = document.getElementById('openai-status');
+        if (statusElement) {
+            const dot = statusElement.querySelector('.status-dot');
+            const text = statusElement.querySelector('.status-text');
+            
+            if (dot && text) {
+                dot.className = `status-dot status-${status}`;
+                text.textContent = message;
+            }
+        }
+    }
+
+    async loadOpenAIStats() {
+        try {
+            const response = await fetch('/api/openai/stats');
+            if (response.ok) {
+                const stats = await response.json();
+                this.updateOpenAIStats(stats);
+            }
+        } catch (error) {
+            console.error('Error loading OpenAI stats:', error);
+        }
+    }
+
+    updateOpenAIStats(stats) {
+        const elements = {
+            'openai-messages-today': stats.messagesToday || 0,
+            'openai-tokens-used': stats.tokensUsed || 0,
+            'openai-estimated-cost': `$${(stats.estimatedCost || 0).toFixed(4)}`
+        };
+
+        Object.entries(elements).forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.textContent = value;
+            }
+        });
+    }
+
+    // Métodos de autenticación
+    checkAuthentication() {
+        const ALLOWED_EMAILS = [
+            'lbencomo94@gmail.com',
+            'vargascorporate@gmail.com'
+        ];
+        
+        const loggedUser = localStorage.getItem('loggedUser');
+        
+        if (!loggedUser || !ALLOWED_EMAILS.includes(loggedUser)) {
+            // Redirigir al login
+            window.location.href = '/login.html';
+            return;
+        }
+        
+        // Usuario autenticado
+        this.currentUser = loggedUser;
+    }
+    
+    setupAuthUI() {
+        // Mostrar usuario logueado
+        const loggedUserElement = document.getElementById('logged-user');
+        if (loggedUserElement && this.currentUser) {
+            loggedUserElement.textContent = this.currentUser;
+        }
+        
+        // Configurar botón de logout
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', () => {
+                this.logout();
+            });
+        }
+    }
+    
+    logout() {
+        // Confirmar logout
+        if (confirm('¿Estás seguro de que quieres cerrar sesión?')) {
+            // Limpiar localStorage
+            localStorage.removeItem('loggedUser');
+            
+            // Mostrar mensaje
+            this.showToast('Sesión cerrada exitosamente', 'info');
+            
+            // Redirigir al login después de un breve delay
+            setTimeout(() => {
+                window.location.href = '/login.html';
+            }, 1000);
         }
     }
 }
