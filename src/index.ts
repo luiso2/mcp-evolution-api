@@ -961,20 +961,28 @@ class EvolutionMCPServer {
 const app = express();
 app.use(express.json());
 
-// Health check
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'evolution-api-mcp' });
-});
+// Import API routes
+import { createAPIRouter } from './routes/api.js';
 
-// MCP endpoint
-app.post('/mcp', async (_req, res) => {
-  try {
-    // Handle MCP requests via HTTP
-    // This would need proper MCP protocol handling for production
-    res.json({ status: 'ok' });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
+// Use API routes
+app.use('/api', createAPIRouter(evolutionAPI));
+
+// Root endpoint
+app.get('/', (_req, res) => {
+  res.json({ 
+    status: 'ok', 
+    service: 'evolution-api-mcp',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      instances: '/api/instances',
+      send_text: '/api/send/text',
+      send_media: '/api/send/media',
+      contacts: '/api/instances/:name/contacts',
+      groups: '/api/instances/:name/groups',
+      chats: '/api/instances/:name/chats'
+    }
+  });
 });
 
 // Start servers
