@@ -108,6 +108,7 @@ export interface WebhookConfig {
   url?: string;
   webhookByEvents?: boolean;
   webhookBase64?: boolean;
+  webhookHeaders?: Record<string, string>;
   events?: string[];
 }
 

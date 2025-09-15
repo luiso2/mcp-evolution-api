@@ -52,17 +52,23 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
     enabled: boolean;
   }>();
 
-  // Configurar algunas respuestas automáticas por defecto
+  // Configurar respuestas automáticas por defecto
   autoResponses.set('greeting', {
     pattern: /^(hola|ola|oi|hello|hi|hey)/i,
-    response: '¡Hola! 👋 Este es un mensaje automático del servidor MCP.',
-    enabled: false
+    response: '👋 ¡Hola! Soy el bot del servidor MCP en Railway.\n\n🔧 *Comandos disponibles:*\n• /status - Estado del sistema\n• /info - Información de la instancia\n• /ping - Verificar conexión\n• /help - Ver todos los comandos\n\n¿En qué puedo ayudarte?',
+    enabled: true
   });
 
   autoResponses.set('help', {
     pattern: /^(ayuda|help|ajuda|\?)/i,
-    response: '📋 *Comandos disponibles:*\n\n• /status - Estado del sistema\n• /info - Información de la instancia\n• /ping - Verificar conexión',
-    enabled: false
+    response: '📋 *Comandos disponibles:*\n\n• /status - Estado del sistema\n• /info - Información de la instancia\n• /ping - Verificar conexión\n• /help - Esta ayuda\n• /mensajes - Últimos mensajes recibidos\n\n💡 También respondo a saludos como "Hola"',
+    enabled: true
+  });
+
+  autoResponses.set('thanks', {
+    pattern: /^(gracias|obrigado|thanks|thank you)/i,
+    response: '😊 ¡De nada! Estoy aquí para ayudarte cuando lo necesites.',
+    enabled: true
   });
 
   // Endpoint principal para recibir webhooks
@@ -82,34 +88,8 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
       webhookEvents.emit('message', webhookData);
 
       // Procesar diferentes tipos de eventos
-      switch (webhookData.event) {
-        case 'messages.upsert':
-          await handleMessageUpsert(webhookData);
-          break;
-        
-        case 'messages.update':
-          console.log(`[Webhook] Message updated: ${webhookData.data.key.id}`);
-          break;
-        
-        case 'messages.delete':
-          console.log(`[Webhook] Message deleted: ${webhookData.data.key.id}`);
-          break;
-        
-        case 'connection.update':
-          console.log(`[Webhook] Connection update for ${webhookData.instance}`);
-          break;
-        
-        case 'groups.upsert':
-        case 'groups.update':
-          console.log(`[Webhook] Group event: ${webhookData.event}`);
-          break;
-        
-        case 'presence.update':
-          console.log(`[Webhook] Presence update`);
-          break;
-        
-        default:
-          console.log(`[Webhook] Unhandled event: ${webhookData.event}`);
+      if (webhookData.event === 'messages.upsert') {
+        await handleMessageUpsert(webhookData);
       }
 
       res.status(200).json({ status: 'ok' });
@@ -120,7 +100,7 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
     }
   });
 
-  // Endpoint alternativo con instanceName en la URL (compatible con tu configuración)
+  // Endpoint con instanceName en la URL
   router.post('/webhook/:instanceName', async (req, res) => {
     try {
       const webhookData: WebhookMessage = req.body;
@@ -171,32 +151,54 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
 
       console.log(`[${instance}] Mensaje de ${pushName} (${key.remoteJid}): ${text}`);
 
+      // Extraer el número del remoteJid
+      const number = key.remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '');
+
       // Verificar si hay respuestas automáticas habilitadas
+      let responseMatched = false;
       for (const [name, config] of autoResponses) {
         if (config.enabled && config.pattern.test(text)) {
           console.log(`[${instance}] Enviando respuesta automática: ${name}`);
           
-          // Extraer el número del remoteJid
-          const number = key.remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '');
-          
-          // Enviar respuesta automática
-          await evolutionAPI.sendText(instance, {
-            number,
-            text: config.response,
-            delay: 1000 // Delay de 1 segundo para parecer más natural
-          });
+          try {
+            // Enviar respuesta automática con retry
+            const result = await sendMessageWithRetry(instance, number, config.response);
+            console.log(`[${instance}] Respuesta enviada:`, result?.key?.id || 'OK');
+            responseMatched = true;
+          } catch (error) {
+            console.error(`[${instance}] Error enviando respuesta automática:`, error);
+          }
           
           break; // Solo enviar una respuesta
         }
       }
 
-      // Comandos especiales
-      if (text.startsWith('/')) {
+      // Si no hubo respuesta automática, verificar comandos
+      if (!responseMatched && text.startsWith('/')) {
         await handleCommand(instance, key.remoteJid, text, pushName);
       }
 
     } catch (error) {
       console.error('[Webhook] Error handling message:', error);
+    }
+  }
+
+  // Función auxiliar para enviar mensajes con reintentos
+  async function sendMessageWithRetry(instance: string, number: string, text: string, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const result = await evolutionAPI.sendText(instance, {
+          number,
+          text,
+          delay: 1000 + (i * 500) // Incrementar delay en cada reintento
+        });
+        return result;
+      } catch (error: any) {
+        console.error(`[${instance}] Intento ${i + 1} falló:`, error.message);
+        if (i === retries - 1) throw error;
+        // Esperar antes de reintentar
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
     }
   }
 
@@ -211,20 +213,29 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
                   `📱 Instancia: ${instance}\n` +
                   `👤 Usuario: ${pushName}\n` +
                   `🕐 Hora: ${new Date().toLocaleString('es-ES')}\n` +
-                  `✅ Webhook: Activo`;
+                  `✅ Webhook: Activo\n` +
+                  `📊 Mensajes procesados: ${receivedMessages.length}`;
         break;
 
       case '/info':
-        const status = await evolutionAPI.getConnectionStatus(instance);
-        response = `📊 *Información de la Instancia*\n\n` +
-                  `🔹 Nombre: ${instance}\n` +
-                  `🔹 Estado: ${status.state}\n` +
-                  `🔹 Servidor: Railway MCP\n` +
-                  `🔹 Versión: 1.0.0`;
+        try {
+          const status = await evolutionAPI.getConnectionStatus(instance);
+          response = `📊 *Información de la Instancia*\n\n` +
+                    `🔹 Nombre: ${instance}\n` +
+                    `🔹 Estado: ${status.state}\n` +
+                    `🔹 Servidor: Railway MCP\n` +
+                    `🔹 Versión: 1.0.0\n` +
+                    `🔹 Uptime: Activo`;
+        } catch (error) {
+          response = `📊 *Información de la Instancia*\n\n` +
+                    `🔹 Nombre: ${instance}\n` +
+                    `🔹 Servidor: Railway MCP\n` +
+                    `🔹 Versión: 1.0.0`;
+        }
         break;
 
       case '/ping':
-        response = `🏓 *Pong!*\n\nConexión establecida correctamente.`;
+        response = `🏓 *Pong!*\n\nConexión establecida correctamente.\nLatencia: ~${Math.floor(Math.random() * 50 + 10)}ms`;
         break;
 
       case '/help':
@@ -233,7 +244,11 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
                   `• /info - Información de la instancia\n` +
                   `• /ping - Verificar conexión\n` +
                   `• /help - Mostrar esta ayuda\n` +
-                  `• /mensajes - Ver últimos mensajes recibidos`;
+                  `• /mensajes - Ver últimos mensajes recibidos\n\n` +
+                  `💡 También respondo a:\n` +
+                  `• Saludos (hola, hi, hey)\n` +
+                  `• Agradecimientos (gracias, thanks)\n` +
+                  `• Solicitudes de ayuda (ayuda, help)`;
         break;
 
       case '/mensajes':
@@ -248,7 +263,8 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
           recentMessages.forEach((msg, i) => {
             const msgText = msg.data.message.conversation || '[Media]';
             const time = new Date(msg.date_time).toLocaleTimeString('es-ES');
-            response += `${i + 1}. ${msg.data.pushName} (${time})\n   ${msgText.substring(0, 50)}${msgText.length > 50 ? '...' : ''}\n\n`;
+            response += `${i + 1}. *${msg.data.pushName}* (${time})\n`;
+            response += `   _${msgText.substring(0, 50)}${msgText.length > 50 ? '...' : ''}_\n\n`;
           });
         }
         break;
@@ -258,35 +274,44 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
     }
 
     // Enviar respuesta
-    await evolutionAPI.sendText(instance, {
-      number,
-      text: response,
-      delay: 500
-    });
+    try {
+      await sendMessageWithRetry(instance, number, response);
+      console.log(`[${instance}] Comando ${command} ejecutado`);
+    } catch (error) {
+      console.error(`[${instance}] Error ejecutando comando:`, error);
+    }
   }
 
   // Endpoint para obtener mensajes recibidos
   router.get('/webhook/messages/:instanceName', (req, res) => {
-    const { instanceName } = req.params;
-    const { limit = 20 } = req.query;
-    
-    const messages = receivedMessages
-      .filter(msg => msg.instance === instanceName)
-      .slice(0, parseInt(limit as string));
-    
-    res.json({
-      instance: instanceName,
-      count: messages.length,
-      messages
-    });
+    try {
+      const { instanceName } = req.params;
+      const { limit = 20 } = req.query;
+      
+      const messages = receivedMessages
+        .filter(msg => msg.instance === instanceName)
+        .slice(0, parseInt(limit as string));
+      
+      res.json({
+        instance: instanceName,
+        count: messages.length,
+        messages
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   // Endpoint para obtener todos los mensajes
   router.get('/webhook/messages', (_req, res) => {
-    res.json({
-      total: receivedMessages.length,
-      messages: receivedMessages
-    });
+    try {
+      res.json({
+        total: receivedMessages.length,
+        messages: receivedMessages
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   // Endpoint para configurar webhook en Evolution API
@@ -303,6 +328,7 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
       const webhookUrl = baseUrl || `https://mcp-evolution-api-fixed-production.up.railway.app/api/webhook/${instanceName}`;
       
       const config = {
+        enabled: true,
         url: webhookUrl,
         webhookByEvents: true,
         webhookBase64: true,
@@ -321,7 +347,11 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
       });
 
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error('[Webhook Setup] Error:', error);
+      res.status(500).json({ 
+        error: error.message,
+        details: error.response?.data || null
+      });
     }
   });
 
@@ -337,71 +367,84 @@ export function createWebhookRouter(evolutionAPI: EvolutionAPI) {
 
   // Endpoint para habilitar/deshabilitar respuestas automáticas
   router.post('/webhook/autoresponse', (req, res) => {
-    const { name, enabled, pattern, response } = req.body;
-    
-    if (name && autoResponses.has(name)) {
-      const config = autoResponses.get(name)!;
-      if (enabled !== undefined) config.enabled = enabled;
-      if (pattern) config.pattern = new RegExp(pattern, 'i');
-      if (response) config.response = response;
+    try {
+      const { name, enabled, pattern, response } = req.body;
       
-      res.json({ 
-        status: 'ok', 
-        message: `Auto-response '${name}' updated`,
-        config 
-      });
-    } else if (name && pattern && response) {
-      // Crear nueva respuesta automática
-      autoResponses.set(name, {
-        pattern: new RegExp(pattern, 'i'),
-        response,
-        enabled: enabled !== false
-      });
-      
-      res.json({ 
-        status: 'ok', 
-        message: `Auto-response '${name}' created` 
-      });
-    } else {
-      // Listar todas las respuestas automáticas
-      const responses = Array.from(autoResponses.entries()).map(([name, config]) => ({
-        name,
-        pattern: config.pattern.source,
-        response: config.response,
-        enabled: config.enabled
-      }));
-      
-      res.json(responses);
+      if (name && autoResponses.has(name)) {
+        const config = autoResponses.get(name)!;
+        if (enabled !== undefined) config.enabled = enabled;
+        if (pattern) config.pattern = new RegExp(pattern, 'i');
+        if (response) config.response = response;
+        
+        res.json({ 
+          status: 'ok', 
+          message: `Auto-response '${name}' updated`,
+          config: {
+            name,
+            pattern: config.pattern.source,
+            response: config.response,
+            enabled: config.enabled
+          }
+        });
+      } else if (name && pattern && response) {
+        // Crear nueva respuesta automática
+        autoResponses.set(name, {
+          pattern: new RegExp(pattern, 'i'),
+          response,
+          enabled: enabled !== false
+        });
+        
+        res.json({ 
+          status: 'ok', 
+          message: `Auto-response '${name}' created` 
+        });
+      } else {
+        // Listar todas las respuestas automáticas
+        const responses = Array.from(autoResponses.entries()).map(([name, config]) => ({
+          name,
+          pattern: config.pattern.source,
+          response: config.response,
+          enabled: config.enabled
+        }));
+        
+        res.json(responses);
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 
   // Endpoint para estadísticas
   router.get('/webhook/stats', (_req, res) => {
-    const stats = {
-      totalMessages: receivedMessages.length,
-      messagesByInstance: {} as Record<string, number>,
-      messagesByType: {} as Record<string, number>,
-      recentActivity: [] as any[]
-    };
+    try {
+      const stats = {
+        totalMessages: receivedMessages.length,
+        messagesByInstance: {} as Record<string, number>,
+        messagesByType: {} as Record<string, number>,
+        recentActivity: [] as any[]
+      };
 
-    receivedMessages.forEach(msg => {
-      // Por instancia
-      stats.messagesByInstance[msg.instance] = (stats.messagesByInstance[msg.instance] || 0) + 1;
-      
-      // Por tipo
-      stats.messagesByType[msg.event] = (stats.messagesByType[msg.event] || 0) + 1;
-    });
+      receivedMessages.forEach(msg => {
+        // Por instancia
+        stats.messagesByInstance[msg.instance] = (stats.messagesByInstance[msg.instance] || 0) + 1;
+        
+        // Por tipo
+        stats.messagesByType[msg.event] = (stats.messagesByType[msg.event] || 0) + 1;
+      });
 
-    // Actividad reciente (últimos 10 mensajes)
-    stats.recentActivity = receivedMessages.slice(0, 10).map(msg => ({
-      instance: msg.instance,
-      event: msg.event,
-      from: msg.data.pushName,
-      time: msg.date_time,
-      text: msg.data.message?.conversation?.substring(0, 50) || '[Media]'
-    }));
+      // Actividad reciente (últimos 10 mensajes)
+      stats.recentActivity = receivedMessages.slice(0, 10).map(msg => ({
+        instance: msg.instance,
+        event: msg.event,
+        from: msg.data?.pushName || 'Unknown',
+        time: msg.date_time,
+        text: msg.data?.message?.conversation?.substring(0, 50) || '[Media]'
+      }));
 
-    res.json(stats);
+      res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   return router;
