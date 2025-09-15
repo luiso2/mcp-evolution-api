@@ -7,10 +7,24 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { EvolutionAPI } from './services/evolution-api.js';
 import { TemplateService } from './services/template-service.js';
+import { InstanceManager } from './services/instance-manager.js';
+import logger from './utils/logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
+
+// Initialize logger
+logger.info('🚀 Starting Evolution API MCP Server', {
+  nodeEnv: process.env.NODE_ENV || 'development',
+  logLevel: process.env.LOG_LEVEL || 'info',
+  evolutionUrl: process.env.EVOLUTION_API_URL || 'http://localhost:8080'
+});
 
 // Initialize services
 const evolutionAPI = new EvolutionAPI({
@@ -18,7 +32,10 @@ const evolutionAPI = new EvolutionAPI({
   apiKey: process.env.EVOLUTION_API_KEY || ''
 });
 
+const instanceManager = new InstanceManager(evolutionAPI);
 const templateService = new TemplateService('./templates');
+
+logger.info('✅ Services initialized successfully');
 
 // Define tools
 const tools: Tool[] = [
@@ -427,6 +444,11 @@ class EvolutionMCPServer {
   private server: Server;
 
   constructor() {
+    logger.info('🔧 Initializing MCP Server', {
+      name: 'evolution-api-mcp',
+      version: '1.0.0'
+    });
+
     this.server = new Server(
       {
         name: 'evolution-api-mcp',
@@ -439,6 +461,7 @@ class EvolutionMCPServer {
       }
     );
 
+    logger.info('✅ MCP Server initialized successfully');
     this.setupHandlers();
   }
 
@@ -451,6 +474,11 @@ class EvolutionMCPServer {
     // Call tool handler
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
+      
+      logger.info(`🔧 MCP Tool called: ${name}`, {
+        toolName: name,
+        arguments: Object.keys(args || {})
+      });
 
       try {
         switch (name) {
@@ -520,11 +548,19 @@ class EvolutionMCPServer {
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error: any) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        
+        logger.error(`❌ MCP Tool error: ${name}`, {
+          toolName: name,
+          error: errorMessage,
+          stack: error instanceof Error ? error.stack : undefined
+        });
+        
         return {
           content: [
             {
               type: 'text',
-              text: `Error: ${error.message}`
+              text: `Error: ${errorMessage}`
             }
           ]
         };
@@ -961,13 +997,46 @@ class EvolutionMCPServer {
 const app = express();
 app.use(express.json());
 
-// Import API routes
+// Add HTTP logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.http(`${req.method} ${req.path}`, {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      duration: `${duration}ms`,
+      userAgent: req.get('User-Agent'),
+      ip: req.ip
+    });
+  });
+  next();
+});
+
+// Import routers
 import { createAPIRouter } from './routes/api.js';
 import { createWebhookRouter } from './routes/webhook.js';
 
-// Use API routes
-app.use('/api', createAPIRouter(evolutionAPI));
-app.use('/api', createWebhookRouter(evolutionAPI));
+// Serve static files for dashboard
+// In production (dist/), go up two levels to reach public/
+// In development (src/), go up one level to reach public/
+const publicPath = process.env.NODE_ENV === 'production' 
+  ? path.join(__dirname, '..', '..', 'public')
+  : path.join(__dirname, '..', 'public');
+
+app.use('/dashboard', express.static(publicPath));
+
+// Dashboard route
+app.get('/dashboard', (_req, res) => {
+  res.sendFile(path.join(publicPath, 'index.html'));
+});
+
+// Webhook routes (SIN autenticación)
+app.use('/api/webhook', createWebhookRouter(evolutionAPI));
+
+// API routes (CON autenticación) 
+app.use('/api', createAPIRouter(evolutionAPI, instanceManager));
 
 // Root endpoint
 app.get('/', (_req, res) => {
@@ -975,6 +1044,7 @@ app.get('/', (_req, res) => {
     status: 'ok', 
     service: 'evolution-api-mcp',
     version: '1.0.0',
+    dashboard: '/dashboard',
     endpoints: {
       health: '/api/health',
       instances: '/api/instances',
@@ -1008,7 +1078,22 @@ async function main() {
   // Start Express server for cloud deployment
   const PORT = process.env.MCP_SERVER_PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`Evolution API MCP Server (HTTP) running on port ${PORT}`);
+    logger.info(`🌐 Webhook server started`, {
+      port: PORT,
+      webhookEndpoint: `http://localhost:${PORT}/api/webhook`,
+      apiEndpoint: `http://localhost:${PORT}/api`
+    });
+    
+    console.log(`🌐 Webhook server running on port ${PORT}`);
+    console.log(`📡 Webhook endpoint: http://localhost:${PORT}/api/webhook`);
+    console.log(`🔧 API endpoint: http://localhost:${PORT}/api`);
+    console.log('\n📋 Available endpoints:');
+    console.log('  POST /api/webhook - Receive Evolution API webhooks');
+    console.log('  GET  /api/instances - List instances');
+    console.log('  POST /api/instances - Create instance');
+    console.log('  GET  /api/templates - List templates');
+    console.log('  POST /api/templates - Create template');
+    console.log('\n🚀 Server ready to receive webhooks!');
   });
 }
 

@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { EvolutionAPI } from '../services/evolution-api.js';
+import { InstanceManager } from '../services/instance-manager.js';
+import logger from '../utils/logger.js';
 
-export function createAPIRouter(evolutionAPI: EvolutionAPI) {
+export function createAPIRouter(evolutionAPI: EvolutionAPI, instanceManager: InstanceManager) {
   const router = Router();
 
   // Middleware para verificar API Key
@@ -10,9 +12,20 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
     
     // Verificar si el API key es correcto
     if (apiKey !== process.env.EVOLUTION_API_KEY) {
+      logger.warn('🔒 Unauthorized API access attempt', {
+        path: req.path,
+        method: req.method,
+        ip: req.ip,
+        userAgent: req.get('User-Agent')
+      });
       res.status(401).json({ error: 'Unauthorized' });
       return; // Add explicit return
     }
+    
+    logger.debug('✅ API Key validated successfully', {
+      path: req.path,
+      method: req.method
+    });
     
     next();
   });
@@ -27,12 +40,170 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
   });
 
   // Instance endpoints
+  // Get all instances with enhanced status
   router.get('/instances', async (_req, res) => {
+    logger.info('📋 Getting instances list with status');
     try {
-      const instances = await evolutionAPI.fetchInstances();
-      res.json(instances);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      const managedInstances = instanceManager.getAllInstances();
+      const stats = instanceManager.getInstanceStats();
+      
+      logger.info('✅ Successfully retrieved instances', {
+        count: managedInstances.length,
+        stats
+      });
+      
+      res.json({
+        instances: managedInstances,
+        stats
+      });
+    } catch (error) {
+      logger.error('❌ Failed to get instances', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      res.status(500).json({ error: 'Failed to fetch instances' });
+    }
+  });
+
+  // Get specific instance
+  router.get('/instances/:instanceName', async (req, res) => {
+    const { instanceName } = req.params;
+    logger.info('📱 Getting instance details', { instanceName });
+    
+    try {
+      const instance = instanceManager.getInstance(instanceName);
+      if (!instance) {
+        return res.status(404).json({ error: 'Instance not found' });
+      }
+      
+      logger.info('✅ Successfully retrieved instance', { instanceName });
+      return res.json(instance);
+    } catch (error) {
+      logger.error('❌ Failed to get instance', {
+        instanceName,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return res.status(500).json({ error: 'Failed to fetch instance' });
+    }
+  });
+
+  // Create new instance
+  router.post('/instances', async (req, res) => {
+    const { instanceName, webhookUrl } = req.body;
+    
+    if (!instanceName) {
+      return res.status(400).json({ error: 'Instance name is required' });
+    }
+    
+    logger.info('🆕 Creating new instance', { instanceName, webhookUrl });
+    
+    try {
+      const instance = await instanceManager.createInstance(instanceName, webhookUrl);
+      logger.info('✅ Successfully created instance', { instanceName });
+      return res.status(201).json(instance);
+    } catch (error) {
+      logger.error('❌ Failed to create instance', {
+        instanceName,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return res.status(500).json({ error: 'Failed to create instance' });
+    }
+  });
+
+  // Connect instance
+  router.post('/instances/:instanceName/connect', async (req, res) => {
+    const { instanceName } = req.params;
+    logger.info('🔌 Connecting instance', { instanceName });
+    
+    try {
+      await instanceManager.connectInstance(instanceName);
+      logger.info('✅ Successfully initiated connection', { instanceName });
+      res.json({ message: 'Connection initiated', instanceName });
+    } catch (error) {
+      logger.error('❌ Failed to connect instance', {
+        instanceName,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      res.status(500).json({ error: 'Failed to connect instance' });
+    }
+  });
+
+  // Disconnect instance
+  router.post('/instances/:instanceName/disconnect', async (req, res) => {
+    const { instanceName } = req.params;
+    logger.info('🔌 Disconnecting instance', { instanceName });
+    
+    try {
+      await instanceManager.disconnectInstance(instanceName);
+      logger.info('✅ Successfully disconnected instance', { instanceName });
+      res.json({ message: 'Instance disconnected', instanceName });
+    } catch (error) {
+      logger.error('❌ Failed to disconnect instance', {
+        instanceName,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      res.status(500).json({ error: 'Failed to disconnect instance' });
+    }
+  });
+
+  // Delete instance
+  router.delete('/instances/:instanceName', async (req, res) => {
+    const { instanceName } = req.params;
+    logger.info('🗑️ Deleting instance', { instanceName });
+    
+    try {
+      await instanceManager.deleteInstance(instanceName);
+      logger.info('✅ Successfully deleted instance', { instanceName });
+      res.json({ message: 'Instance deleted', instanceName });
+    } catch (error) {
+      logger.error('❌ Failed to delete instance', {
+        instanceName,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      res.status(500).json({ error: 'Failed to delete instance' });
+    }
+  });
+
+  // Refresh instance status
+  router.post('/instances/:instanceName/refresh', async (req, res) => {
+    const { instanceName } = req.params;
+    logger.info('🔄 Refreshing instance status', { instanceName });
+    
+    try {
+      await instanceManager.refreshInstanceStatus(instanceName);
+      const instance = instanceManager.getInstance(instanceName);
+      logger.info('✅ Successfully refreshed instance status', { instanceName });
+      res.json(instance);
+    } catch (error) {
+      logger.error('❌ Failed to refresh instance status', {
+        instanceName,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      res.status(500).json({ error: 'Failed to refresh instance status' });
+    }
+  });
+
+  // Set auto-reply for instance
+  router.post('/instances/:instanceName/auto-reply', async (req, res) => {
+    const { instanceName } = req.params;
+    const { enabled } = req.body;
+    
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled field must be a boolean' });
+    }
+    
+    logger.info('⚙️ Setting auto-reply', { instanceName, enabled });
+    
+    try {
+      instanceManager.setAutoReply(instanceName, enabled);
+      const instance = instanceManager.getInstance(instanceName);
+      logger.info('✅ Successfully updated auto-reply setting', { instanceName, enabled });
+      return res.json(instance);
+    } catch (error) {
+      logger.error('❌ Failed to set auto-reply', {
+        instanceName,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return res.status(500).json({ error: 'Failed to set auto-reply' });
     }
   });
 
@@ -45,14 +216,7 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
     }
   });
 
-  router.post('/instances/:name/connect', async (req, res) => {
-    try {
-      const result = await evolutionAPI.connectInstance(req.params.name);
-      res.json(result);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+
 
   // Message endpoints
   router.post('/send/text', async (req, res) => {
