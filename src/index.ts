@@ -962,12 +962,12 @@ const app = express();
 app.use(express.json());
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'evolution-api-mcp' });
 });
 
 // MCP endpoint
-app.post('/mcp', async (req, res) => {
+app.post('/mcp', async (_req, res) => {
   try {
     // Handle MCP requests via HTTP
     // This would need proper MCP protocol handling for production

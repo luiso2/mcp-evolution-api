@@ -2,7 +2,6 @@ import axios, { AxiosInstance } from 'axios';
 import {
   Instance,
   Message,
-  SendMessageOptions,
   Contact,
   Group,
   WebhookConfig,
@@ -11,10 +10,8 @@ import {
 
 export class EvolutionAPI {
   private client: AxiosInstance;
-  private config: EvolutionConfig;
 
   constructor(config: EvolutionConfig) {
-    this.config = config;
     this.client = axios.create({
       baseURL: config.baseUrl,
       headers: {

@@ -1,4 +1,4 @@
-import { MessageTemplate, TemplateUsage, DEFAULT_TEMPLATES } from '../types/templates.js';
+import { MessageTemplate, DEFAULT_TEMPLATES } from '../types/templates.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
