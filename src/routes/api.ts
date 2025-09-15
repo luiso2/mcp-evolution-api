@@ -10,7 +10,8 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
     
     // Verificar si el API key es correcto
     if (apiKey !== process.env.EVOLUTION_API_KEY) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      res.status(401).json({ error: 'Unauthorized' });
+      return; // Add explicit return
     }
     
     next();
@@ -59,9 +60,10 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
       const { instanceName, number, text, delay } = req.body;
       
       if (!instanceName || !number || !text) {
-        return res.status(400).json({ 
+        res.status(400).json({ 
           error: 'Missing required fields: instanceName, number, text' 
         });
+        return;
       }
 
       // Limpiar el número - remover espacios, guiones y símbolos
@@ -90,9 +92,10 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
       const { instanceName, number, mediatype, media, caption, fileName } = req.body;
       
       if (!instanceName || !number || !mediatype || !media) {
-        return res.status(400).json({ 
+        res.status(400).json({ 
           error: 'Missing required fields: instanceName, number, mediatype, media' 
         });
+        return;
       }
 
       const cleanNumber = number.replace(/[\s\-\+\(\)]/g, '');
@@ -129,9 +132,10 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
       const { instanceName, numbers } = req.body;
       
       if (!instanceName || !numbers || !Array.isArray(numbers)) {
-        return res.status(400).json({ 
+        res.status(400).json({ 
           error: 'Missing required fields: instanceName, numbers (array)' 
         });
+        return;
       }
 
       const cleanNumbers = numbers.map(n => n.replace(/[\s\-\+\(\)]/g, ''));
@@ -161,9 +165,10 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
       const { instanceName, subject, participants, description } = req.body;
       
       if (!instanceName || !subject || !participants) {
-        return res.status(400).json({ 
+        res.status(400).json({ 
           error: 'Missing required fields: instanceName, subject, participants' 
         });
+        return;
       }
 
       const cleanParticipants = participants.map((p: string) => 
@@ -197,7 +202,8 @@ export function createAPIRouter(evolutionAPI: EvolutionAPI) {
       const { remoteJid, limit } = req.query;
       
       if (!remoteJid) {
-        return res.status(400).json({ error: 'Missing remoteJid query parameter' });
+        res.status(400).json({ error: 'Missing remoteJid query parameter' });
+        return;
       }
 
       const messages = await evolutionAPI.findMessages(
